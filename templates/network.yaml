@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  create network resources (vpc, public subnets, private subnets, across 2az).
+  you can optionally configure vpc flow log settings if you need.
+
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Optional Settings
+        Parameters:
+          - EnableVpcFlowLog
+      - Label:
+          default: Static Settings (Don't Edit)
+        Parameters:
+          - SolutionName
+
+Parameters:
+  SolutionName:
+    Description: solution name
+    Type: String
+    Default: aws-managed-lc4ri
+    AllowedValues:
+      - aws-managed-lc4ri
+  EnableVpcFlowLog:
+    Description: if select `ENABLE`, vpc flow logs will be stored in cloudwatch log group for 30 days
+    Type: String
+    Default: ENABLE
+    AllowedValues:
+      - ENABLE
+      - DISABLE
+
+Conditions:
+  VpcFlowLogEnabled:
+    Fn::Equals:
+      - !Ref EnableVpcFlowLog
+      - ENABLE
+
+Mappings:
+  NetworkCidr:
+    MainVpc:
+      Vpc: 10.196.0.0/16
+      PublicSubnet0: 10.196.0.0/24
+      PublicSubnet1: 10.196.1.0/24
+      PrivateSubnet0: 10.196.10.0/24
+      PrivateSubnet1: 10.196.11.0/24
+
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Fn::FindInMap:
+          - NetworkCidr
+          - MainVpc
+          - Vpc
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${SolutionName}-vpc
+  PublicSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 
+        Fn::FindInMap:
+          - NetworkCidr
+          - MainVpc
+          - PublicSubnet0
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub:
+              - ${SolutionName}-${Az}-public-subnet
+              - Az:
+                  Fn::Select:
+                    - 0
+                    - !GetAZs ''
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 
+        Fn::FindInMap:
+          - NetworkCidr
+          - MainVpc
+          - PublicSubnet1
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub:
+              - ${SolutionName}-${Az}-public-subnet
+              - Az:
+                  Fn::Select:
+                    - 1
+                    - !GetAZs ''
+  PrivateSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 
+        Fn::FindInMap:
+          - NetworkCidr
+          - MainVpc
+          - PrivateSubnet0
+      AvailabilityZone: 
+        Fn::Select:
+          - 0
+          - !GetAZs ""
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub:
+              - ${SolutionName}-${Az}-private-subnet
+              - Az:
+                  Fn::Select:
+                    - 0
+                    - !GetAZs ''
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 
+        Fn::FindInMap:
+          - NetworkCidr
+          - MainVpc
+          - PrivateSubnet1
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: 
+        Fn::Select:
+          - 1
+          - !GetAZs ""
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub:
+              - ${SolutionName}-${Az}-private-subnet
+              - Az:
+                  Fn::Select:
+                    - 1
+                    - !GetAZs ''
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${SolutionName}-igw
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref Igw
+
+  PublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${SolutionName}-public-rt
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRt
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+  PublicRtAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet0
+      RouteTableId: !Ref PublicRt
+  PublicRtAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRt
+  
+  PrivateRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${SolutionName}-private-rt
+  PrivateRtAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet0
+      RouteTableId: !Ref PrivateRt
+  PrivateRtAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRt
+
+  VpcFlowLogGroup:
+    Condition: VpcFlowLogEnabled
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 30
+      LogGroupName: !Sub ${SolutionName}-vpc-flow-log
+
+  VpcFlowLogRole:
+    Condition: VpcFlowLogEnabled
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - vpc-flow-logs.amazonaws.com
+            Action:
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*
+
+      Description: iam role for logging vpc flow log by cloudwatch logs
+      Path: /
+      Policies: 
+        - PolicyName: CwlPermissions 
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - logs:DescribeLogGroups
+                - logs:DescribeLogStreams
+              Resource: "*"
+      RoleName: !Sub ${SolutionName}-vpc-flow-log-cwl-role
+
+  VpcFlowLogCwl:
+    Condition: VpcFlowLogEnabled
+    Type: AWS::EC2::FlowLog
+    Properties: 
+      DeliverLogsPermissionArn: !GetAtt VpcFlowLogRole.Arn
+      LogDestination: !GetAtt VpcFlowLogGroup.Arn
+      LogDestinationType: cloud-watch-logs
+      MaxAggregationInterval: 600
+      ResourceId: !Ref Vpc
+      ResourceType: VPC
+      TrafficType: ALL
+      Tags:
+        - Value: !Sub ${SolutionName}-vpc-flow-log
+          Key: Name
+
+Outputs:
+  VpcId:
+    Description: vpc id
+    Value: !Ref Vpc
+    Export: 
+      Name: !Sub ${SolutionName}-vpc-id
+  PublicSubnetId0:
+    Description: public subnet id on 1st az
+    Value: !Ref PublicSubnet0
+    Export: 
+      Name: !Sub ${SolutionName}-az0-public-subnet-id
+  PublicSubnetId1:
+    Description: public subnet id on 2nd az
+    Value: !Ref PublicSubnet1
+    Export: 
+      Name: !Sub ${SolutionName}-az1-public-subnet-id
+  PrivateSubnetId0:
+    Description: private subnet id on 1st az
+    Value: !Ref PrivateSubnet0
+    Export: 
+      Name: !Sub ${SolutionName}-az0-private-subnet-id
+  PrivateSubnetId1:
+    Description: private subnet id on 2nd az
+    Value: !Ref PrivateSubnet1
+    Export: 
+      Name: !Sub ${SolutionName}-az1-private-subnet-id
+  DefaultVpcSgId:
+    Description: default security group id of vpc
+    Value: !GetAtt Vpc.DefaultSecurityGroup
+    Export: 
+      Name: !Sub ${SolutionName}-default-security-group-id
+
+
+  VpcFlowLogRoleAnr:
+    Condition: VpcFlowLogEnabled
+    Description: arn of iam role for vpc flow log
+    Value: !GetAtt VpcFlowLogRole.Arn
+  VpcFlowLogGroupName:
+    Condition: VpcFlowLogEnabled
+    Description: log group name for vpc flow log
+    Value: !Ref VpcFlowLogGroup
+  VpcFlowLogId:
+    Condition: VpcFlowLogEnabled
+    Description: vpc flow log id
+    Value: !Ref VpcFlowLogCwl
+

@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  create shared storage resources (EFS).
+  efs can be accessible only by IAM Roles for SageMaker notebook instances
+
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Git Settings
+        Parameters:
+          - DefaultRepositoryName
+      - Label:
+          default: Static Settings (Don't Edit)
+        Parameters:
+          - SolutionName
+
+Parameters:
+  SolutionName:
+    Description: solution name
+    Type: String
+    Default: aws-managed-lc4ri
+    AllowedValues:
+      - aws-managed-lc4ri
+  
+  DefaultRepositoryName:
+    Description: default CodeCommit Git repository name
+    Type: String
+    Default: aws-managed-lc4ri
+
+
+Resources:
+  Efs:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Type: AWS::EFS::FileSystem
+    Properties: 
+      BackupPolicy: 
+        Status: ENABLED
+      BypassPolicyLockoutSafetyCheck: false
+      Encrypted: true
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - elasticfilesystem:ClientRootAccess
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientMount
+            Condition:
+              Bool:
+                elasticfilesystem:AccessedViaMountTarget: true
+          - Effect: Deny
+            Principal:
+              AWS: "*"
+            Action:
+              - elasticfilesystem:ClientRootAccess
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientMount
+            Condition:
+              ArnNotLike:
+                aws:PrincipalArn: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${SolutionName}-*
+
+      FileSystemTags: 
+        - Key: Name
+          Value: !Sub ${SolutionName}-efs
+      # KmsKeyId: aws/elasticfilesystem
+      LifecyclePolicies: 
+        - TransitionToIA: AFTER_30_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+
+  EfsMountTarget0:
+    Type: AWS::EFS::MountTarget
+    Properties: 
+      FileSystemId: !Ref Efs
+      SecurityGroups: 
+        - Fn::ImportValue:
+            !Sub ${SolutionName}-default-security-group-id
+      SubnetId:
+        Fn::ImportValue:
+          !Sub ${SolutionName}-az0-private-subnet-id
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties: 
+      FileSystemId: !Ref Efs
+      SecurityGroups: 
+        - Fn::ImportValue:
+            !Sub ${SolutionName}-default-security-group-id
+      SubnetId:
+        Fn::ImportValue:
+          !Sub ${SolutionName}-az1-private-subnet-id
+
+
+  CodeCommitDefaultGitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties: 
+      RepositoryDescription: default repository attached to notebook instances
+      RepositoryName: !Ref DefaultRepositoryName
+        
+  SageMakerDefaultGitRepository:
+    Type: AWS::SageMaker::CodeRepository
+    Properties: 
+      CodeRepositoryName: !Ref DefaultRepositoryName
+      GitConfig: 
+        # Branch: main
+        RepositoryUrl: !GetAtt CodeCommitDefaultGitRepository.CloneUrlHttp
+
+Outputs:
+  EfsId:
+    Description: file system id
+    Value: !Ref Efs
+    Export: 
+      Name: !Sub ${SolutionName}-efs-id
+  EfsArn:
+    Description: file system arn
+    Value: !GetAtt Efs.Arn
+    Export: 
+      Name: !Sub ${SolutionName}-efs-arn
+
+  MoubtTargetId0:
+    Description: efs mount target id on 1st az
+    Value: !Ref EfsMountTarget0
+    Export: 
+      Name: !Sub ${SolutionName}-az0-mount-target-id
+  MoubtTargetId1:
+    Description: efs mount target id on 2nd az
+    Value: !Ref EfsMountTarget1
+    Export: 
+      Name: !Sub ${SolutionName}-az1-mount-target-id
+  
+  MoubtTargetIp0:
+    Description: efs mount target ip address on 1st az
+    Value: !GetAtt EfsMountTarget0.IpAddress
+    Export: 
+      Name: !Sub ${SolutionName}-az0-mount-target-ip
+  MoubtTargetIp1:
+    Description: efs mount target ip address on 2nd az
+    Value: !GetAtt EfsMountTarget1.IpAddress
+    Export: 
+      Name: !Sub ${SolutionName}-az1-mount-target-ip
+
+  DefaultGitRepoName:
+    Description: default CodeCommit Git repository name
+    Value: !GetAtt SageMakerDefaultGitRepository.CodeRepositoryName
+    Export: 
+      Name: !Sub ${SolutionName}-default-git-repo-name
+  DefaultGitRepoUrl:
+    Description: default CodeCommit Git repository url for http clone
+    Value: !GetAtt CodeCommitDefaultGitRepository.CloneUrlHttp
+    Export: 
+      Name: !Sub ${SolutionName}-default-git-repo-url

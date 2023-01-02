@@ -1,0 +1,543 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  create notebook instance and related permission settings
+
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network Settings
+        Parameters:
+          - NetworkResourceDeployMode
+          - EnableVpcFlowLog
+      - Label:
+          default: Storage Settings
+        Parameters:
+          - StorageResourceDeployMode
+          - DefaultRepositoryName
+
+      - Label:
+          default: Notebook Settings
+        Parameters:
+          - UniqueSuffix
+          - InstanceType
+          - VolumeSize
+          - AzPreference
+          - IdleTimeoutSec
+          - NotebookInstanceRoleType
+          - CustomNotebookInstanceRoleArn
+
+      - Label:
+          default: Access Permission Settings (Require At Least 1 Principal)
+        Parameters:
+          - AccessAllowedIamUsers
+          - AccessAllowedIamGroups
+          - AccessAllowedIamRoles
+          
+      - Label:
+          default: Static Settings (Don't Edit)
+        Parameters:
+          - SolutionName
+
+Parameters:
+  SolutionName:
+    Description: solution name
+    Type: String
+    Default: aws-managed-lc4ri
+    AllowedValues:
+      - aws-managed-lc4ri
+
+  NetworkResourceDeployMode:
+    Description: >
+      If select `USE_EXISTING`, use existing network resources.\n
+      If select `CREATE_NEW`, create new nwtwork resources.\n
+      You can create network resources only at once.
+    Type: String
+    Default: CREATE_NEW
+    AllowedValues:
+      - CREATE_NEW
+      - USE_EXSITING
+  EnableVpcFlowLog:
+    Description: >
+      If select `ENABLE`, vpc flow logs will be stored in cloudwatch log group for 30 days.\n
+      If you select `NetworkResourceDeployMode` as `USE_EXISTING`, this parameter will be ignored.
+    Type: String
+    Default: ENABLE
+    AllowedValues:
+      - ENABLE
+      - DISABLE
+
+  StorageResourceDeployMode:
+    Description: >
+      If select `USE_EXISTING`, use existing storage resources.\n
+      If select `CREATE_NEW`, create new storage resources.\n
+      You can create storage resources only at once.
+    Type: String
+    Default: CREATE_NEW
+    AllowedValues:
+      - CREATE_NEW
+      - USE_EXSITING
+  DefaultRepositoryName:
+    Description: > 
+      default CodeCommit Git repository name.\n
+      If you select `StorageResourceDeployMode` as `USE_EXISTING`, this parameter will be ignored.
+    Type: String
+    Default: aws-managed-lc4ri
+
+
+
+  UniqueSuffix:
+    Description: > 
+      unique suffix for notebook and other resourecs to identify each resources.
+      resources' name will be created like `{SolutionName}-foobar-{UniqueSuffix}` 
+    Type: String
+    MaxLength: 20
+    MinLength: 1
+
+  InstanceType:
+    Description: notebook instance type
+    Type: String
+    Default: ml.t3.medium
+    AllowedValues:
+      - ml.t3.medium
+      - ml.t3.large
+      - ml.t3.xlarge
+  AzPreference:
+    Description: availability zone preference of notebook instance
+    Type: String
+    Default: 1ST_AZ
+    AllowedValues:
+      - 1ST_AZ
+      - 2ND_AZ
+  VolumeSize:
+    Description: volume size(GB) of notebook instance
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 100
+
+  IdleTimeoutSec:
+    Description: number of seconds until notebook in idle status will be automatically stop
+    Type: Number
+    Default: 3600
+    MinValue: 1800
+    MaxValue: 21600
+
+  NotebookInstanceRoleType:
+    Description: >
+      IAM role type attached to notebook instance.
+      If selected `MANAGED_ADMIN`, AdministratorAccess managed policy will be attached to the role.
+      If selected `MANAGED_READONLY`, ReadOnlyAccess managed policy will be attached to the role.
+      If selected `CUSTOM`,  enter your own customized iam role to the parameter `CustomNotebookInstanceRoleArn`
+    Type: String
+    Default: MANAGED_ADMIN
+    AllowedValues:
+      - MANAGED_ADMIN
+      - MANAGED_READONLY
+      - CUSTOM
+  CustomNotebookInstanceRoleArn:
+    Description: >
+      If you selec the parameter `NotebookInstanceRoleType` as `MANAGED_ADMIN` or `MANAGED_READONLY`, this parameter will be ignored.
+    Type: String
+    Default: ""
+
+  AccessAllowedIamUsers:
+    Description: list of iam users allowed access to the notebook instance
+    Type: CommaDelimitedList
+    Default: ""
+  AccessAllowedIamGroups:
+    Description: list of iam groups allowed access to the notebook instance
+    Type: CommaDelimitedList
+    Default: ""
+  AccessAllowedIamRoles:
+    Description: list of iam roles allowed access to the notebook instance
+    Type: CommaDelimitedList
+    Default: ""
+
+
+Rules:
+  RoleSelectionRule:
+    RuleCondition:
+      Fn::Equals:
+        - !Ref NotebookInstanceRoleType
+        - CUSTOM
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - !Ref CustomNotebookInstanceRoleArn
+                - ""
+        AssertDescription: if you select `NotebookInstanceRoleType` as  `CUSTOM`, must enter the custom iam role arn into `CustomNotebookInstanceRoleArn`
+
+
+Conditions:
+  CreateNetworkResources:
+    Fn::Equals:
+      - !Ref NetworkResourceDeployMode
+      - "CREATE_NEW"
+  CreateStorageResources:
+    Fn::Equals:
+      - !Ref StorageResourceDeployMode
+      - "CREATE_NEW"
+
+  1stAzSelected:
+    Fn::Equals:
+      - !Ref AzPreference
+      - 1ST_AZ
+
+  ManagedRoleSelected:
+    Fn::Equals:
+      - !Ref CustomNotebookInstanceRoleArn
+      - ""
+
+  AdminTypeSelected:
+    Fn::Equals:
+      - !Ref NotebookInstanceRoleType
+      - MANAGED_ADMIN
+
+  UsersSelected:
+    Fn::Not:
+      - Fn::Equals:
+          - Fn::Join:
+              - ""
+              - !Ref AccessAllowedIamUsers
+          - ""
+  GroupsSelected:
+    Fn::Not:
+      - Fn::Equals:
+          - Fn::Join:
+              - ""
+              - !Ref AccessAllowedIamGroups
+          - ""
+  RolesSelected:
+    Fn::Not:
+      - Fn::Equals:
+          - Fn::Join:
+              - ""
+              - !Ref AccessAllowedIamRoles
+          - ""
+
+
+Resources:
+  NetworkStack:
+    Condition: CreateNetworkResources
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      Parameters: 
+        EnableVpcFlowLog: !Ref EnableVpcFlowLog
+      Tags: 
+        - Key: SolutionName
+          Value: !Ref SolutionName
+      TemplateURL: https://public-artifact-bucket-382098889955-ap-northeast-1.s3.ap-northeast-1.amazonaws.com/aws-managed-lc4ri/templates/network.yaml
+
+  StorageStack:
+    Condition: CreateStorageResources
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      Parameters: 
+        DefaultRepositoryName: !Ref DefaultRepositoryName
+      Tags: 
+        - Key: SolutionName
+          Value: !Ref SolutionName
+      TemplateURL: https://public-artifact-bucket-382098889955-ap-northeast-1.s3.ap-northeast-1.amazonaws.com/aws-managed-lc4ri/templates/storage.yaml
+
+  NotebookInstanceRole:
+    Condition: ManagedRoleSelected
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Description: iam role for sagemaker notebook instance
+      Path: /
+      ManagedPolicyArns:
+        Fn::If:
+          - AdminTypeSelected
+          - 
+            - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+            - arn:aws:iam::aws:policy/AdministratorAccess
+          - 
+            - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+            - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Policies: 
+        - PolicyName: EfsPermission 
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Effect: Allow
+              Action:
+                - elasticfilesystem:ClientRootAccess
+                - elasticfilesystem:ClientWrite
+                - elasticfilesystem:ClientMount
+              Resource:
+                Fn::ImportValue: !Sub ${SolutionName}-efs-arn
+        - PolicyName: CodeCommitPermission
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement:
+              Effect: Allow
+              Action:
+                - codecommit:GitPull
+                - codecommit:GitPush
+              Resource: "*"
+      RoleName: !Sub ${SolutionName}-notebook-instance-role-${UniqueSuffix}        
+
+  LifeCycleConfig:
+    Type: AWS::SageMaker::NotebookInstanceLifecycleConfig
+    Properties: 
+      NotebookInstanceLifecycleConfigName: !Sub ${SolutionName}-notebook-lcc-${UniqueSuffix}
+      OnCreate: 
+        - Content:
+            Fn::Base64:
+              Fn::Sub:
+                - |
+                  #!/bin/bash
+
+                  set -ex
+
+                  # OVERVIEW
+                  # This script stops a SageMaker notebook once it's idle for more than 1 hour (default time)
+                  # You can change the idle time for stop using the environment variable below.
+                  # If you want the notebook the stop only if no browsers are open, remove the --ignore-connections flag
+                  #
+                  # Note that this script will fail if either condition is not met
+                  #   1. Ensure the Notebook Instance has internet connectivity to fetch the example config
+                  #   2. Ensure the Notebook Instance execution role permissions to SageMaker:StopNotebookInstance to stop the notebook 
+                  #       and SageMaker:DescribeNotebookInstance to describe the notebook.
+                  #
+
+                  # PARAMETERS
+                  IDLE_TIME=${IdleTimeout}
+
+                  echo "Fetching the autostop script"
+                  wget https://raw.githubusercontent.com/aws-samples/amazon-sagemaker-notebook-instance-lifecycle-config-samples/master/scripts/auto-stop-idle/autostop.py
+
+
+                  echo "Detecting Python install with boto3 install"
+
+                  # Find which install has boto3 and use that to run the cron command. So will use default when available
+                  # Redirect stderr as it is unneeded
+                  if /usr/bin/python3 -c "import boto3" 2>/dev/null; then
+                      PYTHON_DIR='/usr/bin/python3'
+                  elif /usr/bin/python -c "import boto3" 2>/dev/null; then
+                      PYTHON_DIR='/usr/bin/python'
+                  else
+                      # If no boto3 just quit because the script won't work
+                      echo "No boto3 found in Python or Python3. Exiting..."
+                      exit 1
+                  fi
+
+                  echo "Found boto3 at $PYTHON_DIR"
+
+
+                  echo "Starting the SageMaker autostop script in cron"
+
+                  (crontab -l 2>/dev/null; echo "*/5 * * * * $PYTHON_DIR $PWD/autostop.py --time $IDLE_TIME --ignore-connections >> /var/log/jupyter.log") | crontab -
+
+                  sudo yum install -y amazon-efs-utils
+                  mkdir -p /home/ec2-user/SageMaker/share
+
+                  sudo -u ec2-user -i <<EOF
+                      set -ex
+
+                      pip install cfn-lint
+                      # cfn-lint --version
+
+                      # install AWS SAM CLI
+                      wget https://github.com/aws/aws-sam-cli/releases/latest/download/aws-sam-cli-linux-x86_64.zip
+                      unzip aws-sam-cli-linux-x86_64.zip -d sam-installation
+                      sudo ./sam-installation/install
+                      rm -fr aws-sam-cli-linux-x86_64.zip sam-installation
+                      # sam --version
+
+                      # install awstoe
+                      wget https://awstoe-ap-northeast-1.s3.ap-northeast-1.amazonaws.com/latest/linux/amd64/awstoe
+                      sudo mv ./awstoe /usr/local/bin/
+                      sudo chmod +x /usr/local/bin/awstoe
+                      # awstoe --version
+
+                      # install cdk
+                      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
+                      . ~/.nvm/nvm.sh
+                      nvm install 16
+                      npm install -g npm@9.2.0
+                      npm install -g aws-cdk
+                      # cdk --version
+
+                  EOF
+
+                - IdleTimeout: !Ref IdleTimeoutSec
+      OnStart: 
+        - Content:
+            Fn::Base64:
+              Fn::Sub: 
+                - |
+                  #!/bin/bash
+                  set -ex
+
+                  mkdir -p /home/ec2-user/SageMaker/share
+                  sudo mount -t efs -o tls,iam ${FsId}:/ /home/ec2-user/SageMaker/share
+                  sudo chmod go+wr /home/ec2-user/SageMaker/share
+
+                  sudo rm -f /usr/local/bin/cfn-lint
+                  sudo rm -f /usr/local/bin/cdk
+                  sudo rm -f /usr/local/bin/node
+
+                  sudo ln -s /home/ec2-user/.nvm/versions/node/*/bin/cdk /usr/local/bin/
+                  sudo ln -s /home/ec2-user/.nvm/versions/node/*/bin/node /usr/local/bin/
+                  sudo ln -s /home/ec2-user/anaconda3/bin/cfn-lint /usr/local/bin/
+
+                - FsId:
+                    Fn::ImportValue: !Sub ${SolutionName}-efs-id
+
+
+
+  Notebook:
+    Type: AWS::SageMaker::NotebookInstance
+    Properties: 
+      DefaultCodeRepository:
+        Fn::ImportValue: !Sub ${SolutionName}-default-git-repo-name
+      DirectInternetAccess: Enabled
+      InstanceMetadataServiceConfiguration: 
+        MinimumInstanceMetadataServiceVersion: "2"
+      InstanceType: !Ref InstanceType
+      # KmsKeyId: String
+      LifecycleConfigName: !GetAtt LifeCycleConfig.NotebookInstanceLifecycleConfigName
+      NotebookInstanceName: !Sub ${SolutionName}-notebook-instance-${UniqueSuffix}
+      PlatformIdentifier: notebook-al2-v2
+      RoleArn:
+        Fn::If:
+          - ManagedRoleSelected
+          - !GetAtt NotebookInstanceRole.Arn
+          - !Ref CustomNotebookInstanceRoleArn
+      RootAccess: Enabled
+      SecurityGroupIds: 
+        - Fn::ImportValue:
+            !Sub ${SolutionName}-default-security-group-id
+      SubnetId:
+        Fn::If:
+          - 1stAzSelected
+          - Fn::ImportValue:
+              !Sub ${SolutionName}-az0-private-subnet-id
+          - Fn::ImportValue:
+              !Sub ${SolutionName}-az1-private-subnet-id
+      VolumeSizeInGB: !Ref VolumeSize
+
+
+  AccessAllowPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Sub ${SolutionName}-access-allow-${UniqueSuffix}
+      Groups:
+        Fn::If:
+          - GroupsSelected
+          - !Ref AccessAllowedIamGroups
+          - !Ref AWS::NoValue
+      Roles: 
+        Fn::If:
+          - RolesSelected
+          - !Ref AccessAllowedIamRoles
+          - !Ref AWS::NoValue
+      Users: 
+        Fn::If:
+          - UsersSelected
+          - !Ref AccessAllowedIamUsers
+          - !Ref AWS::NoValue
+
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Action:
+            - sagemaker:CreatePresignedNotebookInstanceUrl
+          Resource: !Ref Notebook
+
+
+Outputs:
+
+
+  NotebookInstanceArn:
+    Description: notebook instance arn
+    Value: !Ref Notebook
+  NotebookInstanceRoleName:
+    Condition: ManagedRoleSelected
+    Description: iam role name for notebook instance
+    Value: !Ref NotebookInstanceRole
+  NotebookConsoleUrl:
+    Description: management console url for managing notebook instance
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/sagemaker/home?region=${AWS::Region}#/notebook-instances
+
+  VpcId:
+    Condition: CreateNetworkResources
+    Description: vpc id
+    Value: !GetAtt NetworkStack.Outputs.VpcId
+  PublicSubnetId0:
+    Condition: CreateNetworkResources
+    Description: public subnet id on 1st az
+    Value: !GetAtt NetworkStack.Outputs.PublicSubnetId0
+  PublicSubnetId1:
+    Condition: CreateNetworkResources
+    Description: public subnet id on 2nd az
+    Value: !GetAtt NetworkStack.Outputs.PublicSubnetId1
+
+  PrivateSubnetId0:
+    Condition: CreateNetworkResources
+    Description: private subnet id on 1st az
+    Value: !GetAtt NetworkStack.Outputs.PrivateSubnetId0
+
+  PrivateSubnetId1:
+    Condition: CreateNetworkResources
+    Description: private subnet id on 2nd az
+    Value: !GetAtt NetworkStack.Outputs.PrivateSubnetId1
+  DefaultVpcSgId:
+    Condition: CreateNetworkResources
+    Description: default security group id of vpc
+    Value: !GetAtt NetworkStack.Outputs.DefaultVpcSgId
+
+  EfsId:
+    Condition: CreateStorageResources
+    Description: file system id
+    Value: !GetAtt StorageStack.Outputs.EfsId
+  EfsArn:
+    Condition: CreateStorageResources
+    Description: file system arn
+    Value: !GetAtt StorageStack.Outputs.EfsArn
+
+  MoubtTargetId0:
+    Condition: CreateStorageResources
+    Description: efs mount target id on 1st az
+    Value: !GetAtt StorageStack.Outputs.MoubtTargetId0
+  MoubtTargetId1:
+    Condition: CreateStorageResources
+    Description: efs mount target id on 2nd az
+    Value: !GetAtt StorageStack.Outputs.MoubtTargetId1
+  
+  MoubtTargetIp0:
+    Condition: CreateStorageResources
+    Description: efs mount target ip address on 1st az
+    Value: !GetAtt StorageStack.Outputs.MoubtTargetIp0
+  MoubtTargetIp1:
+    Condition: CreateStorageResources
+    Description: efs mount target ip address on 2nd az
+    Value: !GetAtt StorageStack.Outputs.MoubtTargetIp1
+
+  DefaultGitRepoName:
+    Condition: CreateStorageResources
+    Description: default CodeCommit Git repository name
+    Value: !GetAtt StorageStack.Outputs.DefaultGitRepoName
+
+  DefaultGitRepoUrl:
+    Condition: CreateStorageResources
+    Description: default CodeCommit Git repository url for http clone
+    Value: !GetAtt StorageStack.Outputs.DefaultGitRepoUrl
